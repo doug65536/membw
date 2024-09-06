@@ -27,12 +27,6 @@ sudo apt install gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 ```
 
-#### (OPTIONAL) To cross compile a linux executable:
-```
-sudo apt install gcc-x86-64-linux-gnu \
-    g++-x86-64-linux-gnu binutils-x86-64-linux-gnu
-```
-
 #### (OPTIONAL) Produce membw.exe
 ```
 make build-windows
