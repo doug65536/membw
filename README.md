@@ -16,9 +16,21 @@ make
 make run
 ```
 
-#### (OPTIONAL) To produce a windows executable from linux:
+#### (OPTIONAL) To produce a windows executable:
 ```
 sudo apt install mingw-w64-common mingw-w64-tools binutils-mingw-w64 g++-mingw-w64-x86-64
+```
+
+#### (OPTIONAL) To produce an aarch64/RPI4 executable:
+```
+sudo apt install gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+```
+
+#### (OPTIONAL) To cross compile a linux executable:
+```
+sudo apt install gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu binutils-x86-64-linux-gnu
 ```
 
 #### (OPTIONAL) Produce membw.exe
