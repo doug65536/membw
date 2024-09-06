@@ -19,7 +19,7 @@ static inline veci32 vec_load(int32_t const *rhs)
 {
     return vld1q_s32(rhs);
 }
-static int vec_movemask(veci32 rhs)
+static inline int vec_movemask(veci32 rhs)
 {
     // Reinterpret the int32x4_t as an int8x16_t
     int8x16_t byte_vec = vreinterpretq_s8_s32(rhs);
@@ -54,7 +54,7 @@ static inline veci32 vec_load(int32_t const * rhs)
     return _mm256_load_si256(
         reinterpret_cast<__m256i const *>(rhs));
 }
-static int vec_movemask(veci32 rhs)
+static inline int vec_movemask(veci32 rhs)
 {
     return _mm256_movemask_epi8(rhs);
 }
@@ -74,13 +74,13 @@ static inline veci32 vec_load(int32_t const *rhs)
     return _mm_load_si128(
         reinterpret_cast<__m128i const *>(rhs));
 }
-static int vec_movemask(veci32 rhs)
+static inline int vec_movemask(veci32 rhs)
 {
     return _mm_movemask_epi8(rhs);
 }
 #else
 #include <array>
-typedef alignas(16) std::array<int32_t, 4> veci32;
+typedef std::array<int32_t, 4> veci32;
 static inline veci32 vec_zero()
 {
     return { 0, 0, 0, 0 };
@@ -101,7 +101,14 @@ static inline veci32 vec_load(int32_t const *rhs)
         rhs[1],
         rhs[2],
         rhs[3]
-    }
+    };
+}
+static inline int vec_movemask(veci32 rhs)
+{
+    return (!!(rhs[0])) |
+        (!!(rhs[1]) << 1) |
+        (!!(rhs[1]) << 2) |
+        (!!(rhs[1]) << 3);
 }
 #endif
 
