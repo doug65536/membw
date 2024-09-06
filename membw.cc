@@ -3,7 +3,112 @@
 #include <cstring>
 #include <chrono>
 #include <vector>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+typedef int32x4_t veci32;
+static inline veci32 vec_zero()
+{
+    return vdupq_n_s32(0);
+}
+static inline veci32 vec_add(veci32 lhs, veci32 rhs)
+{
+    return vaddq_s32(lhs, rhs);
+}
+static inline veci32 vec_load(int32_t const *rhs)
+{
+    return vld1q_s32(rhs);
+}
+static int vec_movemask(veci32 rhs)
+{
+    // Reinterpret the int32x4_t as an int8x16_t
+    int8x16_t byte_vec = vreinterpretq_s8_s32(rhs);
+
+    // Shift right by 7 to move the sign bit
+    // to the least significant bit of each byte
+    uint8x16_t sign_bits = vshrq_n_u8(
+        vreinterpretq_u8_s8(byte_vec), 7);
+
+    // Narrow the result into an 8-bit mask (first 8 lanes)
+    uint64_t low = vgetq_lane_u64(
+        vreinterpretq_u64_u8(sign_bits), 0);
+    uint64_t high = vgetq_lane_u64(
+        vreinterpretq_u64_u8(sign_bits), 1);
+
+    // Combine the high and low parts into a 16-bit integer mask
+    return static_cast<uint16_t>((high << 8) | low);
+}
+#elif defined(__AVX2__)
+#include <immintrin.h>
+typedef __m256i veci32;
+static inline veci32 vec_zero()
+{
+    return _mm256_setzero_si256();
+}
+static inline veci32 vec_add(veci32 lhs, veci32 rhs)
+{
+    return _mm256_add_epi8(lhs, rhs);
+}
+static inline veci32 vec_load(int32_t const * rhs)
+{
+    return _mm256_load_si256(
+        reinterpret_cast<__m256i const *>(rhs));
+}
+static int vec_movemask(veci32 rhs)
+{
+    return _mm256_movemask_epi8(rhs);
+}
+#elif defined(__SSE2__)
 #include <xmmintrin.h>
+typedef __m128i veci32;
+static inline veci32 vec_zero()
+{
+    return _mm_setzero_si128();
+}
+static inline veci32 vec_add(veci32 lhs, veci32 rhs)
+{
+    return _mm_add_epi8(lhs, rhs);
+}
+static inline veci32 vec_load(int32_t const *rhs)
+{
+    return _mm_load_si128(
+        reinterpret_cast<__m128i const *>(rhs));
+}
+static int vec_movemask(veci32 rhs)
+{
+    return _mm_movemask_epi8(rhs);
+}
+#else
+#include <array>
+typedef alignas(16) std::array<int32_t, 4> veci32;
+static inline veci32 vec_zero()
+{
+    return { 0, 0, 0, 0 };
+}
+static inline veci32 vec_add(veci32 lhs, veci32 rhs)
+{
+    return {
+        lhs[0] + rhs[0],
+        lhs[1] + rhs[1],
+        lhs[2] + rhs[2],
+        lhs[3] + rhs[3]
+    };
+}
+static inline veci32 vec_load(int32_t const *rhs)
+{
+    return {
+        rhs[0],
+        rhs[1],
+        rhs[2],
+        rhs[3]
+    }
+}
+#endif
+
+static inline veci32 vec_load(veci32 const *rhs)
+{
+    return vec_load(reinterpret_cast<int32_t const *>(rhs));
+}
 
 std::string engineering(uint64_t n,
     bool pad = true, bool frac = false)
@@ -56,7 +161,7 @@ int measure(size_t max, int64_t duration_ns)
         engineering(size) << "B: ";
 
     std::vector<char> mem_block(size);
-    __m128i *mem = (__m128i*)mem_block.data();
+    veci32 *mem = (veci32*)mem_block.data();
 
     if (!mem) {
         int err = errno;
@@ -90,18 +195,18 @@ int measure(size_t max, int64_t duration_ns)
     std::chrono::steady_clock::time_point en, st =
         std::chrono::steady_clock::now();
 
-    __m128i tot1 = _mm_setzero_si128();
-    __m128i tot2 = _mm_setzero_si128();
+    veci32 tot1 = vec_zero();
+    veci32 tot2 = vec_zero();
     uint64_t ns;
     size_t outer_iters = std::max(1ULL, size ? 16777216ULL / size : 0);
     size_t bytes = 0;
     do {
         for (size_t p = 0; p < outer_iters; ++p) {
-            for (size_t i = 0; i < size; i += 64) {
-                __m128i rhs1 = _mm_load_si128(mem + (i >> 5));
-                __m128i rhs2 = _mm_load_si128(mem + (i >> 5) + 1);
-                tot1 = _mm_add_epi8(tot1, rhs1);
-                tot2 = _mm_add_epi8(tot2, rhs2);
+            for (size_t i = 0; i < size; i += sizeof(veci32) * 2) {
+                veci32 rhs1 = vec_load(mem + (i / (sizeof(veci32) * 2)));
+                veci32 rhs2 = vec_load(mem + (i / (sizeof(veci32) * 2)) + 1);
+                tot1 = vec_add(tot1, rhs1);
+                tot2 = vec_add(tot2, rhs2);
             }
             // Little gcc trick to make it forget
             // everything it knows about memory content
@@ -118,9 +223,9 @@ int measure(size_t max, int64_t duration_ns)
         bytes += size * outer_iters;
     } while (ns < duration_ns);
 
-    tot1 = _mm_add_epi8(tot1, tot2);
+    tot1 = vec_add(tot1, tot2);
 
-    int volatile dummy = _mm_movemask_epi8(tot1);
+    int volatile dummy = vec_movemask(tot1);
 
     double bytes_per_sec = bytes * 1e9 / ns;
 
@@ -129,7 +234,7 @@ int measure(size_t max, int64_t duration_ns)
     return 0;
 }
 
-int main(int argc, char **argv)
+int internal_main(int argc, char const * const *argv)
 {
     size_t max = 1048576;
 
@@ -158,3 +263,13 @@ int main(int argc, char **argv)
 
     return result;
 }
+
+int main(int argc, char const * const *argv)
+{
+    int result = internal_main(argc, argv);
+    std::cout << "Press ENTER to exit\n";
+    std::string input;
+    std::getline(std::cin, input);
+    return result;
+}
+

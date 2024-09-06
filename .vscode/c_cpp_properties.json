@@ -8,13 +8,27 @@
             "defines": []
         },
         {
-            "name": "Win32",
+            "name": "aarch64",
             "includePath": [
                 "${workspaceFolder}/**"
             ],
             "defines": [],
-            "compilerPath": "x86_64-w64-mingw32-g++",
-            "intelliSenseMode": "windows-gcc-x64"
+            "compilerPath": "aarch64-linux-gnu-g++",
+            "intelliSenseMode": "linux-gcc-arm64",
+            "cppStandard": "c++17",
+            "cStandard": "c17"
+        },
+        {
+            "name": "linux-avx2",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "c++",
+            "compilerArgs": [
+                "-mavx2"
+            ],
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4
