@@ -3,6 +3,8 @@
 #include <cstring>
 #include <chrono>
 #include <vector>
+#include <cerrno>
+#include <atomic>
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -21,22 +23,34 @@ static inline veci32 vec_load(int32_t const *rhs)
 }
 static inline int vec_movemask(veci32 rhs)
 {
-    // Reinterpret the int32x4_t as an int8x16_t
-    int8x16_t byte_vec = vreinterpretq_s8_s32(rhs);
+    // get the sign bit of each byte
+    uint8x16_t bytes    = vreinterpretq_u8_s32(rhs);
+    uint8x16_t highbits = vshrq_n_u8(bytes, 7); // 0/1 per byte
 
-    // Shift right by 7 to move the sign bit
-    // to the least significant bit of each byte
-    uint8x16_t sign_bits = vshrq_n_u8(
-        vreinterpretq_u8_s8(byte_vec), 7);
+    // weight each bit position with unique powers of two
+    // so we can sum-reduce into the final bitmask
+    static const uint8x16_t bitpos =
+        { 1,2,4,8,0x10,0x20,0x40,0x80, 1,2,4,8,0x10,0x20,0x40,0x80 };
 
-    // Narrow the result into an 8-bit mask (first 8 lanes)
-    uint64_t low = vgetq_lane_u64(
-        vreinterpretq_u64_u8(sign_bits), 0);
-    uint64_t high = vgetq_lane_u64(
-        vreinterpretq_u64_u8(sign_bits), 1);
+    uint8x16_t weighted = vandq_u8(highbits, bitpos);
 
-    // Combine the high and low parts into a 16-bit integer mask
-    return static_cast<uint16_t>((high << 8) | low);
+    // parallel reductions (tree), no scalar loop:
+    // fold 16 -> 8 -> 4 -> 2 bytes; 
+    //   result holds {lo_mask, hi_mask, _, _, _, _, _, _}
+    uint8x8_t lo = vget_low_u8(weighted);
+    uint8x8_t hi = vget_high_u8(weighted);
+
+    // 8 bytes: pairwise sums of lo/hi
+    uint8x8_t s = vpadd_u8(lo, hi);   
+    
+    // 4 bytes
+    s = vpadd_u8(s, s);               
+
+    // 2 bytes: [lo_mask, hi_mask, 0, 0, 0, 0, 0, 0]
+    s = vpadd_u8(s, s);               
+
+    // pack the two 8-bit halves into a 16-bit mask
+    return vget_lane_u16(vreinterpret_u16_u8(s), 0);
 }
 #elif defined(__AVX2__)
 #include <immintrin.h>
@@ -51,7 +65,7 @@ static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 }
 static inline veci32 vec_load(int32_t const * rhs)
 {
-    return _mm256_load_si256(
+    return _mm256_loadu_si256(
         reinterpret_cast<__m256i const *>(rhs));
 }
 static inline int vec_movemask(veci32 rhs)
@@ -59,7 +73,7 @@ static inline int vec_movemask(veci32 rhs)
     return _mm256_movemask_epi8(rhs);
 }
 #elif defined(__SSE2__)
-#include <xmmintrin.h>
+#include <emmintrin.h>
 typedef __m128i veci32;
 static inline veci32 vec_zero()
 {
@@ -71,7 +85,7 @@ static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 }
 static inline veci32 vec_load(int32_t const *rhs)
 {
-    return _mm_load_si128(
+    return _mm_loadu_si128(
         reinterpret_cast<__m128i const *>(rhs));
 }
 static inline int vec_movemask(veci32 rhs)
