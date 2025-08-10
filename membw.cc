@@ -170,13 +170,6 @@ int measure(size_t max, int64_t duration_ns)
     std::vector<char> mem_block(size);
     veci32 *mem = (veci32*)mem_block.data();
 
-    if (!mem) {
-        int err = errno;
-        std::cerr << "Memory allocation failed: " <<
-            strerror(err) << "\n";
-        return EXIT_FAILURE;
-    }
-
     // Dirty the pages with a value based on the time
     uint64_t seed = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
