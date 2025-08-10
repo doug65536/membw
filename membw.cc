@@ -194,10 +194,14 @@ int measure(size_t max, int64_t duration_ns)
         seed *= multiplier;
     }
 
+#if FORGET_MEMORY_TRICK
     // Little gcc trick to make it forget
     // everything it knows about memory content
     // This prevents it being too clever to do the work
     __asm__ __volatile__ ("" : : : "memory");
+#else
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
 
     std::chrono::steady_clock::time_point en, st =
         std::chrono::steady_clock::now();
@@ -215,10 +219,14 @@ int measure(size_t max, int64_t duration_ns)
                 tot1 = vec_add(tot1, rhs1);
                 tot2 = vec_add(tot2, rhs2);
             }
+#if FORGET_MEMORY_TRICK
             // Little gcc trick to make it forget
             // everything it knows about memory content
             // This prevents it being too clever to do the work
             __asm__ __volatile__ ("" : : : "memory");
+#else
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
         }
 
         en = std::chrono::steady_clock::now();
