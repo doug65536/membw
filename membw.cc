@@ -47,7 +47,7 @@ static inline veci32 vec_zero()
 }
 static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 {
-    return _mm256_add_epi8(lhs, rhs);
+    return _mm256_add_epi32(lhs, rhs);
 }
 static inline veci32 vec_load(int32_t const * rhs)
 {
@@ -67,7 +67,7 @@ static inline veci32 vec_zero()
 }
 static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 {
-    return _mm_add_epi8(lhs, rhs);
+    return _mm_add_epi32(lhs, rhs);
 }
 static inline veci32 vec_load(int32_t const *rhs)
 {
