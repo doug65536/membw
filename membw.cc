@@ -107,8 +107,8 @@ static inline int vec_movemask(veci32 rhs)
 {
     return (!!(rhs[0])) |
         (!!(rhs[1]) << 1) |
-        (!!(rhs[1]) << 2) |
-        (!!(rhs[1]) << 3);
+        (!!(rhs[2]) << 2) |
+        (!!(rhs[3]) << 3);
 }
 #endif
 
