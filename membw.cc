@@ -45,7 +45,7 @@ static inline int vec_movemask(veci32 rhs)
     
     // 4 bytes
     s = vpadd_u8(s, s);               
-
+    
     // 2 bytes: [lo_mask, hi_mask, 0, 0, 0, 0, 0, 0]
     s = vpadd_u8(s, s);               
 
