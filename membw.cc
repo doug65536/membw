@@ -204,9 +204,9 @@ int measure(size_t max, int64_t duration_ns)
 
     veci32 tot1 = vec_zero();
     veci32 tot2 = vec_zero();
-    uint64_t ns;
+    int64_t ns;
     size_t outer_iters = std::max(1ULL, size ? 16777216ULL / size : 0);
-    size_t bytes = 0;
+    uint64_t bytes = 0;
     do {
         for (size_t p = 0; p < outer_iters; ++p) {
             for (size_t i = 0; i < size; i += sizeof(veci32) * 2) {
@@ -245,13 +245,13 @@ int internal_main(int argc, char const * const *argv)
 {
     size_t max = 1048576;
 
-    int64_t duration_ns = 1000000000ULL;
+    int64_t duration_ns = 1000000000LL;
 
     if (argc > 2)
-        duration_ns = atoll(argv[2]);
+        duration_ns = strtoll(argv[2], nullptr, 10);
 
     if (argc > 1)
-        max = atoll(argv[1]);
+        max = strtoull(argv[1], nullptr, 10);
 
     if (argc == 1 || max == 0) {
         for (int i = 1; i <= 1048576; i += i)
