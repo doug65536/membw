@@ -213,7 +213,8 @@ int measure(size_t max, int64_t duration_ns)
     uint64_t bytes = 0;
     do {
         for (size_t p = 0; p < outer_iters; ++p) {
-            for (size_t i = 0; i < size; i += sizeof(veci32) * 2) {
+            for (size_t i = 0; i + sizeof(veci32) * 2 <= size; 
+                i += sizeof(veci32) * 2) {
                 veci32 rhs1 = vec_load(mem + (i / (sizeof(veci32) * 2)));
                 veci32 rhs2 = vec_load(mem + (i / (sizeof(veci32) * 2)) + 1);
                 tot1 = vec_add(tot1, rhs1);
