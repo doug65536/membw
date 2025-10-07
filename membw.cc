@@ -5,6 +5,7 @@
 #include <vector>
 #include <cerrno>
 #include <atomic>
+#include <cmath>
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -174,7 +175,7 @@ std::string engineering(uint64_t n,
     return result;
 }
 
-int measure(size_t max, int64_t duration_ns)
+int measure(size_t max, int64_t duration_ns, size_t channel_count)
 {
     uint64_t size = max << 10;
 
@@ -252,47 +253,92 @@ int measure(size_t max, int64_t duration_ns)
 
     double bytes_per_sec = bytes * 1e9 / ns;
 
-    std::cout << engineering(bytes_per_sec, true, true) << "B/s\n";
+    double megatransfers = bytes_per_sec / (8e6 * channel_count);
+    double roundedMT = std::floor((megatransfers + 
+        199.999999) / 200) * 200;
+
+    std::cout << engineering(bytes_per_sec, true, true) << "B/s [ " <<
+        channel_count << " x " << roundedMT << "MT/s ]\n";
 
     return 0;
 }
 
-int internal_main(int argc, char const * const *argv)
+int internal_main(int argc, char const * const *argv, bool &quiet)
 {
-    size_t max = 1048576;
+    size_t memsize_kib = 0;
 
     int64_t duration_ns = 1000000000LL;
 
-    if (argc > 2)
-        duration_ns = strtoll(argv[2], nullptr, 10);
+    size_t channel_count = 2;
 
-    if (argc > 1)
-        max = strtoull(argv[1], nullptr, 10);
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--help")) {
+            std::clog << argv[0] << 
+                " [--memk N] [--ns N] [--channels N] [--quiet]\n";
+            quiet = true;
+            return 1;
+        }
+    }
 
-    if (argc == 1 || max == 0) {
+    for (int i = 1; i < argc; ++i) {
+        char const *this_arg = argv[i];
+
+        //
+        // All the no-arg ones are up here
+        if (!strcmp("--quiet", this_arg)) {
+            quiet = 1;
+            continue;
+        }
+
+        // If we made it here, we expect an argument
+        char const *next_arg = argv[i + 1];
+
+        // Whine about missing argument once
+        if (!next_arg || (next_arg[0] == '-' && next_arg[1] == '-')) {
+            std::clog << "Missing " << this_arg << " argument"
+                " or unknown option " << (next_arg?next_arg:"") << "\n";
+            return 1;
+        }
+
+        if (!strcmp("--memk", this_arg)) {
+            memsize_kib = strtoull(next_arg, nullptr, 10);
+        } else if (!strcmp("--channels", this_arg)) {
+            channel_count = strtoull(next_arg, nullptr, 10);
+        } else if (!strcmp("--ns", this_arg)) {
+            duration_ns = strtoull(next_arg, nullptr, 10);
+        } else {
+            std::clog << "Unknown argument: " << this_arg << "\n";
+            return 1;
+        }
+        
+        // Skip over the argument we consumed
+        ++i;
+    }
+
+    if (argc == 1 || memsize_kib == 0) {
         for (int i = 1; i <= 1048576; i += i)
-            measure(i, duration_ns);
+            measure(i, duration_ns, channel_count);
 
         return EXIT_SUCCESS;
     }
 
-    if (!max)
-        max = 1048576;
-
     int result = EXIT_FAILURE;
 
-    if (max)
-        result = measure(max, duration_ns);
+    if (memsize_kib)
+        result = measure(memsize_kib, duration_ns, channel_count);
 
     return result;
 }
 
 int main(int argc, char const * const *argv)
 {
-    int result = internal_main(argc, argv);
-    std::cout << "Press ENTER to exit\n";
+    bool quiet = false;
+    int result = internal_main(argc, argv, quiet);
+    if (!quiet) {
+        std::cerr << "Press ENTER to exit\n";
     std::string input;
     std::getline(std::cin, input);
+    }
     return result;
 }
 
