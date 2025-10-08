@@ -1,6 +1,8 @@
 CXXFLAGS=-g -std=c++17 -fno-exceptions
 ifeq ($(DEBUG),)
-CXXFLAGS+=-O2
+CXXFLAGS+=-O3
+else
+CXXFLAGS+=-O0
 endif
 CXXFLAGS += $(VECFLAGS)
 
@@ -39,7 +41,7 @@ membw$(EXE_EXT): membw.o
 -include membw.d
 
 clean:
-	rm -f membw$(EXE_EXT) membw.d
+	rm -f membw$(EXE_EXT) membw.o membw.d
 
 run: ./membw$(EXE_EXT)
 	./membw$(EXE_EXT)
