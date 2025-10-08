@@ -7,6 +7,13 @@
 #include <cerrno>
 #include <atomic>
 #include <cmath>
+#include <random>
+#include <iomanip>
+
+#define BEGIN_ANONYMOUS namespace {
+#define END_ANONYMOUS }
+
+BEGIN_ANONYMOUS
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -264,7 +271,7 @@ int measure(size_t max, int64_t duration_ns, size_t channel_count)
 }
 
 template<typename T>
-int chase_with(size_t max, int64_t duration_ns)
+int chase_with(size_t max, int64_t duration_ns, bool shuffle)
 {
     // It is given in KB, convert to bytes
     max <<= 10;
@@ -280,10 +287,25 @@ int chase_with(size_t max, int64_t duration_ns)
 
     std::vector<wrapper> mem(max);
 
-    size_t i;
-    for (i = 0; i + 1 < max; ++i)
-        mem[i].value = i + 1;
-    mem[i++].value = 0;
+    if (shuffle) {
+        std::vector<size_t> order(max);
+        std::iota(order.begin(), order.end(), 0);
+
+        // use a fixed seed for repeatability
+        // or rdtsc() for randomness
+        std::mt19937_64 rng(0xC0FFEEULL);
+        std::shuffle(order.begin(), order.end(), rng);
+
+        // Now link them into one big cycle
+        for (size_t i = 0; i + 1 < max; ++i)
+            mem[order[i]].value = order[i + 1];
+        mem[order.back()].value = order.front();
+    } else {
+        size_t i;
+        for (i = 0; i + 1 < max; ++i)
+            mem[i].value = i + 1;
+        mem[i++].value = 0;
+    }
 
     __asm__ __volatile__ ("" : : : "memory");
 
@@ -293,7 +315,7 @@ int chase_with(size_t max, int64_t duration_ns)
 
     int64_t volatile sink;
 
-    int64_t volatile iters = 1000000000;
+    int64_t volatile iters = max;
     int64_t ps{};
     wrapper volatile *p = mem.data();
     for (int pass = 0; ; ++pass) {
@@ -329,34 +351,36 @@ int chase_with(size_t max, int64_t duration_ns)
             std::chrono::nanoseconds>(en - st).count();
 
         // If we got a whole second, good enough
-        if (pass || ps > duration_ns * 1000)
+        if (pass == 2)// || ps > duration_ns * 1000)
             break;
 
-        double scale = (double)duration_ns * 1000 / ps;
-        if (scale <= 1.0)
-            break;
+        if (pass == 1) {
+            double scale = (double)duration_ns * 1000 / ps;
+            // if (scale <= 1.0)
+            //     break;
 
-        iters *= scale;
+            iters *= scale;
+        }
     }
 
     ps /= iters;
 
-    std::cout << ps << "ps latency\n";
+    std::cout << std::setw(6) << ps << "ps latency\n";
     // " (" << (4e12/ps) << "/s)"
 
     return EXIT_SUCCESS;
 }
 
-int chase(size_t max)
+int chase(size_t max, bool shuffle)
 {
     int64_t duration_ns = 1000000000;
     if (max > std::numeric_limits<uint32_t>::max())
-        return chase_with<uint64_t>(max, duration_ns);
+        return chase_with<uint64_t>(max, duration_ns, shuffle);
     if (max > std::numeric_limits<uint16_t>::max())
-        return chase_with<uint32_t>(max, duration_ns);
+        return chase_with<uint32_t>(max, duration_ns, shuffle);
     if (max > std::numeric_limits<uint8_t>::max())
-        return chase_with<uint16_t>(max, duration_ns);
-    return chase_with<uint8_t>(max, duration_ns);
+        return chase_with<uint16_t>(max, duration_ns, shuffle);
+    return chase_with<uint8_t>(max, duration_ns, shuffle);
 }
 
 int internal_main(int argc, char const * const *argv, bool &quiet)
@@ -367,10 +391,12 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
 
     size_t channel_count = 2;
 
+    bool shuffle = true;
+
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--help")) {
             std::clog << argv[0] << 
-                " [--chase] [--memk N] [--ns N] [--channels N] [--quiet]\n";
+                " [--chase] [--seq] [--shuf] [--memk N] [--ns N] [--channels N] [--quiet]\n";
             quiet = true;
             return 1;
         }
@@ -389,6 +415,14 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
         }
         if (!strcmp("--chase", this_arg)) {
             use_chase = 1;
+            continue;
+        }
+        if (!strcmp("--seq", this_arg)) {
+            shuffle = false;
+            continue;
+        }
+        if (!strcmp("--shuf", this_arg)) {
+            shuffle = true;
             continue;
         }
 
@@ -422,7 +456,7 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
             if (!use_chase)
                 measure(i, duration_ns, channel_count);
             else
-                chase_with<unsigned>(i, duration_ns);
+                chase_with<unsigned>(i, duration_ns, shuffle);
         }
 
         return EXIT_SUCCESS;
@@ -435,6 +469,8 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
 
     return result;
 }
+
+END_ANONYMOUS
 
 int main(int argc, char const * const *argv)
 {
