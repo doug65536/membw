@@ -336,8 +336,8 @@ int main(int argc, char const * const *argv)
     int result = internal_main(argc, argv, quiet);
     if (!quiet) {
         std::cerr << "Press ENTER to exit\n";
-    std::string input;
-    std::getline(std::cin, input);
+        std::string input;
+        std::getline(std::cin, input);
     }
     return result;
 }
