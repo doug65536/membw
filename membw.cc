@@ -242,6 +242,102 @@ int measure(size_t max, int64_t duration_ns)
     return 0;
 }
 
+template<typename T>
+int chase_with(size_t max, int64_t duration_ns)
+{
+    // It is given in KB, convert to bytes
+    max <<= 10;
+
+    static_assert(sizeof(T) <= 8);
+
+    union wrapper {
+        T value;
+        char bloat[64];
+    };
+
+    max /= sizeof(wrapper);
+
+    std::vector<wrapper> mem(max);
+
+    size_t i;
+    for (i = 0; i + 1 < max; ++i)
+        mem[i].value = i + 1;
+    mem[i++].value = 0;
+
+    __asm__ __volatile__ ("" : : : "memory");
+
+    std::cout << "Measuring " <<
+        engineering(max * sizeof(wrapper)) << "B: ";
+    std::cout.flush();
+
+    int64_t volatile sink;
+
+    int64_t volatile iters = 1000000000;
+    int64_t ps{};
+    wrapper volatile *p = mem.data();
+    for (int pass = 0; ; ++pass) {
+        auto st = std::chrono::steady_clock::now();
+
+        size_t index = 0;
+        int64_t i = 0;
+
+        // Initial unrolled steps
+        while ((i & 3) != 0 && i < iters) {
+            index = p[index].value;
+            ++i;
+        }
+
+        // Main loop with unrolling
+        for (; i + 4 <= iters; i += 4) {
+            index = p[index].value;
+            index = p[index].value;
+            index = p[index].value;
+            index = p[index].value;
+        }
+
+        // Handle remaining iterations
+        for (; i < iters; ++i) {
+            index = p[index].value;
+        }
+
+        sink = index;
+
+        auto en = std::chrono::steady_clock::now();
+
+        ps = 1000 * std::chrono::duration_cast<
+            std::chrono::nanoseconds>(en - st).count();
+
+        // If we got a whole second, good enough
+        if (pass || ps > duration_ns * 1000)
+            break;
+
+        double scale = (double)duration_ns * 1000 / ps;
+        if (scale <= 1.0)
+            break;
+
+        iters *= scale;
+    }
+
+    ps /= iters;
+
+    std::cout << ps << "ps latency\n";
+    // " (" << (4e12/ps) << "/s)"
+
+    return EXIT_SUCCESS;
+}
+
+int chase(size_t max)
+{
+    int64_t duration_ns = 1000000000;
+    if (max > std::numeric_limits<uint32_t>::max())
+        return chase_with<uint64_t>(max, duration_ns);
+    if (max > std::numeric_limits<uint16_t>::max())
+        return chase_with<uint32_t>(max, duration_ns);
+    if (max > std::numeric_limits<uint8_t>::max())
+        return chase_with<uint16_t>(max, duration_ns);
+    return chase_with<uint8_t>(max, duration_ns);
+}
+
 int internal_main(int argc, char const * const *argv)
 {
     size_t max = 1048576;
@@ -255,8 +351,12 @@ int internal_main(int argc, char const * const *argv)
         max = atoll(argv[1]);
 
     if (argc == 1 || max == 0) {
-        for (int i = 1; i <= 1048576; i += i)
-            measure(i, duration_ns);
+        for (int i = 1; i <= 1048576; i *= 2) {
+            if (!chase)
+                measure(i, duration_ns);
+            else
+                chase_with<unsigned>(i, duration_ns);
+        }
 
         return EXIT_SUCCESS;
     }
