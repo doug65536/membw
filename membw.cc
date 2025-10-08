@@ -123,7 +123,7 @@ std::string engineering(uint64_t n,
 {
     uint64_t n2 = n * 10;
     static char const * const units[] = {
-        "",
+        " ",
         "k",
         "M",
         "G",
@@ -169,7 +169,7 @@ int measure(size_t max, int64_t duration_ns)
         engineering(size) << "B: ";
 
     std::vector<char> mem_block(size);
-    veci32 *mem = (veci32*)mem_block.data();
+    veci32 volatile *mem = (veci32*)mem_block.data();
 
     if (!mem) {
         int err = errno;
@@ -191,7 +191,7 @@ int measure(size_t max, int64_t duration_ns)
     uint64_t multiplier = 6364136223846793005LL;
 
     for (size_t i = 0, e = size / sizeof(uint64_t); i < e; ++i) {
-        reinterpret_cast<uint64_t*>(mem)[i] = seed & mask_63bits;
+        reinterpret_cast<uint64_t volatile *>(mem)[i] = seed & mask_63bits;
         seed *= multiplier;
     }
 
