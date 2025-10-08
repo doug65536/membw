@@ -370,11 +370,13 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--help")) {
             std::clog << argv[0] << 
-                " [--memk N] [--ns N] [--channels N] [--quiet]\n";
+                " [--chase] [--memk N] [--ns N] [--channels N] [--quiet]\n";
             quiet = true;
             return 1;
         }
     }
+
+    bool use_chase = false;
 
     for (int i = 1; i < argc; ++i) {
         char const *this_arg = argv[i];
@@ -383,6 +385,10 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
         // All the no-arg ones are up here
         if (!strcmp("--quiet", this_arg)) {
             quiet = 1;
+            continue;
+        }
+        if (!strcmp("--chase", this_arg)) {
+            use_chase = 1;
             continue;
         }
 
@@ -413,7 +419,7 @@ int internal_main(int argc, char const * const *argv, bool &quiet)
 
     if (argc == 1 || memsize_kib == 0) {
         for (int i = 1; i <= 1048576; i += i) {
-            if (!chase)
+            if (!use_chase)
                 measure(i, duration_ns, channel_count);
             else
                 chase_with<unsigned>(i, duration_ns);
