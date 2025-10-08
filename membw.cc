@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <chrono>
+#include <algorithm>
 #include <vector>
 
 #if defined(__ARM_NEON)
@@ -47,9 +48,9 @@ static inline veci32 vec_zero()
 }
 static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 {
-    return _mm256_add_epi8(lhs, rhs);
+    return _mm256_add_epi32(lhs, rhs);
 }
-static inline veci32 vec_load(int32_t const * rhs)
+static inline veci32 vec_load(int32_t const *rhs)
 {
     return _mm256_load_si256(
         reinterpret_cast<__m256i const *>(rhs));
@@ -107,8 +108,8 @@ static inline int vec_movemask(veci32 rhs)
 {
     return (!!(rhs[0])) |
         (!!(rhs[1]) << 1) |
-        (!!(rhs[1]) << 2) |
-        (!!(rhs[1]) << 3);
+        (!!(rhs[2]) << 2) |
+        (!!(rhs[3]) << 3);
 }
 #endif
 
@@ -210,8 +211,8 @@ int measure(size_t max, int64_t duration_ns)
     do {
         for (size_t p = 0; p < outer_iters; ++p) {
             for (size_t i = 0; i < size; i += sizeof(veci32) * 2) {
-                veci32 rhs1 = vec_load(mem + (i / (sizeof(veci32) * 2)));
-                veci32 rhs2 = vec_load(mem + (i / (sizeof(veci32) * 2)) + 1);
+                veci32 rhs1 = vec_load((veci32*)mem + (i / (sizeof(veci32) * 2)));
+                veci32 rhs2 = vec_load((veci32*)mem + (i / (sizeof(veci32) * 2)) + 1);
                 tot1 = vec_add(tot1, rhs1);
                 tot2 = vec_add(tot2, rhs2);
             }
