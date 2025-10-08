@@ -4,6 +4,9 @@
 #include <chrono>
 #include <algorithm>
 #include <vector>
+#include <cerrno>
+#include <atomic>
+#include <cmath>
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -22,22 +25,34 @@ static inline veci32 vec_load(int32_t const *rhs)
 }
 static inline int vec_movemask(veci32 rhs)
 {
-    // Reinterpret the int32x4_t as an int8x16_t
-    int8x16_t byte_vec = vreinterpretq_s8_s32(rhs);
+    // get the sign bit of each byte
+    uint8x16_t bytes    = vreinterpretq_u8_s32(rhs);
+    uint8x16_t highbits = vshrq_n_u8(bytes, 7); // 0/1 per byte
 
-    // Shift right by 7 to move the sign bit
-    // to the least significant bit of each byte
-    uint8x16_t sign_bits = vshrq_n_u8(
-        vreinterpretq_u8_s8(byte_vec), 7);
+    // weight each bit position with unique powers of two
+    // so we can sum-reduce into the final bitmask
+    static const uint8x16_t bitpos =
+        { 1,2,4,8,0x10,0x20,0x40,0x80, 1,2,4,8,0x10,0x20,0x40,0x80 };
 
-    // Narrow the result into an 8-bit mask (first 8 lanes)
-    uint64_t low = vgetq_lane_u64(
-        vreinterpretq_u64_u8(sign_bits), 0);
-    uint64_t high = vgetq_lane_u64(
-        vreinterpretq_u64_u8(sign_bits), 1);
+    uint8x16_t weighted = vandq_u8(highbits, bitpos);
 
-    // Combine the high and low parts into a 16-bit integer mask
-    return static_cast<uint16_t>((high << 8) | low);
+    // parallel reductions (tree), no scalar loop:
+    // fold 16 -> 8 -> 4 -> 2 bytes; 
+    //   result holds {lo_mask, hi_mask, _, _, _, _, _, _}
+    uint8x8_t lo = vget_low_u8(weighted);
+    uint8x8_t hi = vget_high_u8(weighted);
+
+    // 8 bytes: pairwise sums of lo/hi
+    uint8x8_t s = vpadd_u8(lo, hi);   
+    
+    // 4 bytes
+    s = vpadd_u8(s, s);               
+    
+    // 2 bytes: [lo_mask, hi_mask, 0, 0, 0, 0, 0, 0]
+    s = vpadd_u8(s, s);               
+
+    // pack the two 8-bit halves into a 16-bit mask
+    return vget_lane_u16(vreinterpret_u16_u8(s), 0);
 }
 #elif defined(__AVX2__)
 #include <immintrin.h>
@@ -52,7 +67,7 @@ static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 }
 static inline veci32 vec_load(int32_t const *rhs)
 {
-    return _mm256_load_si256(
+    return _mm256_loadu_si256(
         reinterpret_cast<__m256i const *>(rhs));
 }
 static inline int vec_movemask(veci32 rhs)
@@ -60,7 +75,7 @@ static inline int vec_movemask(veci32 rhs)
     return _mm256_movemask_epi8(rhs);
 }
 #elif defined(__SSE2__)
-#include <xmmintrin.h>
+#include <emmintrin.h>
 typedef __m128i veci32;
 static inline veci32 vec_zero()
 {
@@ -68,11 +83,11 @@ static inline veci32 vec_zero()
 }
 static inline veci32 vec_add(veci32 lhs, veci32 rhs)
 {
-    return _mm_add_epi8(lhs, rhs);
+    return _mm_add_epi32(lhs, rhs);
 }
 static inline veci32 vec_load(int32_t const *rhs)
 {
-    return _mm_load_si128(
+    return _mm_loadu_si128(
         reinterpret_cast<__m128i const *>(rhs));
 }
 static inline int vec_movemask(veci32 rhs)
@@ -161,7 +176,7 @@ std::string engineering(uint64_t n,
     return result;
 }
 
-int measure(size_t max, int64_t duration_ns)
+int measure(size_t max, int64_t duration_ns, size_t channel_count)
 {
     uint64_t size = max << 10;
 
@@ -170,13 +185,6 @@ int measure(size_t max, int64_t duration_ns)
 
     std::vector<char> mem_block(size);
     veci32 volatile *mem = (veci32*)mem_block.data();
-
-    if (!mem) {
-        int err = errno;
-        std::cerr << "Memory allocation failed: " <<
-            strerror(err) << "\n";
-        return EXIT_FAILURE;
-    }
 
     // Dirty the pages with a value based on the time
     uint64_t seed = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -195,31 +203,40 @@ int measure(size_t max, int64_t duration_ns)
         seed *= multiplier;
     }
 
+#if FORGET_MEMORY_TRICK
     // Little gcc trick to make it forget
     // everything it knows about memory content
     // This prevents it being too clever to do the work
     __asm__ __volatile__ ("" : : : "memory");
+#else
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
 
     std::chrono::steady_clock::time_point en, st =
         std::chrono::steady_clock::now();
 
     veci32 tot1 = vec_zero();
     veci32 tot2 = vec_zero();
-    uint64_t ns;
+    int64_t ns;
     size_t outer_iters = std::max(1ULL, size ? 16777216ULL / size : 0);
-    size_t bytes = 0;
+    uint64_t bytes = 0;
     do {
         for (size_t p = 0; p < outer_iters; ++p) {
-            for (size_t i = 0; i < size; i += sizeof(veci32) * 2) {
+            for (size_t i = 0; i + sizeof(veci32) * 2 <= size; 
+                i += sizeof(veci32) * 2) {
                 veci32 rhs1 = vec_load((veci32*)mem + (i / (sizeof(veci32) * 2)));
                 veci32 rhs2 = vec_load((veci32*)mem + (i / (sizeof(veci32) * 2)) + 1);
                 tot1 = vec_add(tot1, rhs1);
                 tot2 = vec_add(tot2, rhs2);
             }
+#if FORGET_MEMORY_TRICK
             // Little gcc trick to make it forget
             // everything it knows about memory content
             // This prevents it being too clever to do the work
             __asm__ __volatile__ ("" : : : "memory");
+#else
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
         }
 
         en = std::chrono::steady_clock::now();
@@ -237,7 +254,12 @@ int measure(size_t max, int64_t duration_ns)
 
     double bytes_per_sec = bytes * 1e9 / ns;
 
-    std::cout << engineering(bytes_per_sec, true, true) << "B/s\n";
+    double megatransfers = bytes_per_sec / (8e6 * channel_count);
+    double roundedMT = std::floor((megatransfers + 
+        199.999999) / 200) * 200;
+
+    std::cout << engineering(bytes_per_sec, true, true) << "B/s [ " <<
+        channel_count << " x " << roundedMT << "MT/s ]\n";
 
     return 0;
 }
@@ -338,22 +360,62 @@ int chase(size_t max)
     return chase_with<uint8_t>(max, duration_ns);
 }
 
-int internal_main(int argc, char const * const *argv)
+int internal_main(int argc, char const * const *argv, bool &quiet)
 {
-    size_t max = 1048576;
+    size_t memsize_kib = 0;
 
-    int64_t duration_ns = 1000000000ULL;
+    int64_t duration_ns = 1000000000LL;
 
-    if (argc > 2)
-        duration_ns = atoll(argv[2]);
+    size_t channel_count = 2;
 
-    if (argc > 1)
-        max = atoll(argv[1]);
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--help")) {
+            std::clog << argv[0] << 
+                " [--memk N] [--ns N] [--channels N] [--quiet]\n";
+            quiet = true;
+            return 1;
+        }
+    }
 
-    if (argc == 1 || max == 0) {
-        for (int i = 1; i <= 1048576; i *= 2) {
+    for (int i = 1; i < argc; ++i) {
+        char const *this_arg = argv[i];
+
+        //
+        // All the no-arg ones are up here
+        if (!strcmp("--quiet", this_arg)) {
+            quiet = 1;
+            continue;
+        }
+
+        // If we made it here, we expect an argument
+        char const *next_arg = argv[i + 1];
+
+        // Whine about missing argument once
+        if (!next_arg || (next_arg[0] == '-' && next_arg[1] == '-')) {
+            std::clog << "Missing " << this_arg << " argument"
+                " or unknown option " << (next_arg?next_arg:"") << "\n";
+            return 1;
+        }
+
+        if (!strcmp("--memk", this_arg)) {
+            memsize_kib = strtoull(next_arg, nullptr, 10);
+        } else if (!strcmp("--channels", this_arg)) {
+            channel_count = strtoull(next_arg, nullptr, 10);
+        } else if (!strcmp("--ns", this_arg)) {
+            duration_ns = strtoull(next_arg, nullptr, 10);
+        } else {
+            std::clog << "Unknown argument: " << this_arg << "\n";
+            return 1;
+        }
+        
+        // Skip over the argument we consumed
+        ++i;
+    }
+
+    if (argc == 1 || memsize_kib == 0) {
+        for (int i = 1; i <= 1048576; i += i) {
             if (!chase)
-                measure(i, duration_ns);
+                measure(i, duration_ns, channel_count);
             else
                 chase_with<unsigned>(i, duration_ns);
         }
@@ -361,23 +423,23 @@ int internal_main(int argc, char const * const *argv)
         return EXIT_SUCCESS;
     }
 
-    if (!max)
-        max = 1048576;
-
     int result = EXIT_FAILURE;
 
-    if (max)
-        result = measure(max, duration_ns);
+    if (memsize_kib)
+        result = measure(memsize_kib, duration_ns, channel_count);
 
     return result;
 }
 
 int main(int argc, char const * const *argv)
 {
-    int result = internal_main(argc, argv);
-    std::cout << "Press ENTER to exit\n";
+    bool quiet = false;
+    int result = internal_main(argc, argv, quiet);
+    if (!quiet) {
+        std::cerr << "Press ENTER to exit\n";
     std::string input;
     std::getline(std::cin, input);
+    }
     return result;
 }
 
