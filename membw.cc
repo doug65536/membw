@@ -255,8 +255,7 @@ int measure(size_t max, int64_t duration_ns, size_t channel_count)
     double bytes_per_sec = bytes * 1e9 / ns;
 
     double megatransfers = bytes_per_sec / (8e6 * channel_count);
-    double roundedMT = std::floor((megatransfers + 
-        199.999999) / 200) * 200;
+    double roundedMT = std::floor(megatransfers / 200) * 200;
 
     std::cout << engineering(bytes_per_sec, true, true) << "B/s [ " <<
         channel_count << " x " << roundedMT << "MT/s ]\n";
